@@ -102,7 +102,7 @@ cmd_progthread(void *ptr, unsigned long nargs)
 
 	strcpy(progname, args[0]);
 
-	result = runprogram(progname);
+	result = runprogram(progname,args,nargs);
 	if (result) {
 		kprintf("Running program %s failed: %s\n", args[0],
 			strerror(result));
@@ -407,6 +407,17 @@ cmd_dth(int nargs, char **args)
 	dbflags = DB_THREADS;
 	return 0;
 }
+//ASST2
+static
+int 
+cmd_dsc(int nargs, char **args)
+{
+	(void)nargs;
+    (void)args;
+
+	dbflags = DB_SYSCALL;
+	return 0;
+}
 
 
 ////////////////////////////////////////
@@ -450,7 +461,8 @@ static const char *opsmenu[] = {
 	"[sync]    Sync filesystems          ",
 	"[panic]   Intentional panic         ",
 	"[q]       Quit and shut down        ",
-	"[dth]     Enable debugging message  ",
+	"[dth]     thread debugging message  ",
+	"[dsc]     syscall debugging message ",
 	NULL
 };
 
@@ -564,6 +576,7 @@ static struct {
 	{ "exit",	cmd_quit },
 	{ "halt",	cmd_quit },
 	{ "dth",        cmd_dth},
+	{ "dsc",        cmd_dsc},
 #if OPT_SYNCHPROBS
 	/* in-kernel synchronization problem(s) */
 	{ "sp1",	whalemating },

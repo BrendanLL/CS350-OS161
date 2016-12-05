@@ -50,7 +50,9 @@
 #include <vfs.h>
 #include <synch.h>
 #include <kern/fcntl.h>  
-
+#include <array.h>
+#include "opt-A2.h"
+#include <limits.h>
 /*
  * The process for the kernel; this holds all the kernel-only threads.
  */
@@ -70,10 +72,42 @@ struct semaphore *no_proc_sem;
 #endif  // UW
 
 
-
 /*
  * Create a proc structure.
  */
+pid_t base_pid = PID_MIN;
+
+#if OPT_A2
+
+unsigned int get_index_proc(pid_t pid){	
+	if(procs_list == NULL) return PID_MAX;
+	(void)pid;
+	for(unsigned int i=0;i<array_num(procs_list);++i){
+		struct proc *p = array_get(procs_list,i);
+		//DEBUG(DB_SYSCALL,"get_index %d %d pid:%d match p->pid %d\n",i,array_num(procs_list),pid,p->p_pid);
+		if(p->p_pid == pid) return i;
+	}
+	return PID_MAX;
+}
+
+pid_t find_pid(){ 
+	//DEBUG(DB_SYSCALL,"find_pid \n");
+	if(!procs_list) return PID_MAX;
+	for(unsigned i = PID_MIN; i < PID_MAX - PID_MIN;i++){
+		//DEBUG(DB_SYSCALL,"check %d is avali\n",i);
+		if(get_index_proc(i)==PID_MAX){
+			//DEBUG(DB_SYSCALL,"find! \n");
+			//base_pid++;
+			//if(base_pid > PID_MAX-1) base_pid=PID_MIN;
+			return i;
+		}
+	}
+	//return PID_MAX if not find*/
+	//DEBUG(DB_SYSCALL,"not find \n");
+	return PID_MAX;
+}
+#endif
+
 static
 struct proc *
 proc_create(const char *name)
@@ -103,6 +137,54 @@ proc_create(const char *name)
 	proc->console = NULL;
 #endif // UW
 
+#if OPT_A2
+	
+	proc->p_pid = find_pid();
+	if(proc->p_pid==PID_MAX){
+		DEBUG(DB_SYSCALL,"no pid space");
+	}
+	proc->canexit = false;
+	proc->exitcode = 0;
+	
+
+	proc->p_exit_lock = lock_create("p_exit_lock");
+	if(proc->p_exit_lock==NULL){ //lock crate false
+		kfree(proc->p_name);
+		kfree(proc);
+		DEBUG(DB_SYSCALL,"no lock space");
+		return NULL;
+	}
+
+	proc->p_cv = cv_create("p_cv");
+	if(proc->p_cv==NULL){ //lock crate false
+		DEBUG(DB_SYSCALL,"no cv lock space");
+		lock_destroy(proc->p_exit_lock);
+		kfree(proc->p_name);
+		kfree(proc);
+		return NULL;
+	}
+	
+	proc->p_wait_lock = lock_create("p_wait_lock");
+	if(proc->p_wait_lock==NULL){ //lock crate false
+		DEBUG(DB_SYSCALL,"no lock space");
+		lock_destroy(proc->p_exit_lock);
+		cv_destroy(proc->p_cv);
+		kfree(proc->p_name);
+		kfree(proc);
+		return NULL;
+	}
+	proc->p_children = *array_create();
+	array_init(&proc->p_children);
+	if(procs_list == NULL){
+		procs_list = array_create();
+		array_init(procs_list);
+		DEBUG(DB_SYSCALL,"all porc init: size %d",array_num(procs_list));
+	}
+	array_add(procs_list,proc,NULL);
+	DEBUG(DB_SYSCALL,"add proc pid: %d index:%d \n",proc->p_pid,get_index_proc(proc->p_pid));
+	
+#else
+#endif //OPT_A2
 	return proc;
 }
 
@@ -112,6 +194,7 @@ proc_create(const char *name)
 void
 proc_destroy(struct proc *proc)
 {
+	DEBUG(DB_SYSCALL,"start destroy children leave:%d \n",array_num(&proc->p_children));
 	/*
          * note: some parts of the process structure, such as the address space,
          *  are destroyed in sys_exit, before we get here
@@ -123,7 +206,14 @@ proc_destroy(struct proc *proc)
 
 	KASSERT(proc != NULL);
 	KASSERT(proc != kproc);
-
+/*
+	array_remove(procs_list, get_index_proc(proc->p_pid));
+		if(array_num(procs_list)==0){
+			DEBUG(DB_SYSCALL,"array cleanup\n");
+			array_cleanup(procs_list);
+			array_destroy(procs_list);
+			procs_list = NULL;
+		}*/
 	/*
 	 * We don't take p_lock in here because we must have the only
 	 * reference to this structure. (Otherwise it would be
@@ -162,10 +252,31 @@ proc_destroy(struct proc *proc)
 	  vfs_close(proc->console);
 	}
 #endif // UW
-
+	//DEBUG(DB_SYSCALL,"thread cleanup\n");
 	threadarray_cleanup(&proc->p_threads);
+	//DEBUG(DB_SYSCALL,"spinlock cleanup\n");
 	spinlock_cleanup(&proc->p_lock);
-
+#if OPT_A2
+	//DEBUG(DB_SYSCALL,"remove array_num: %d, index %d,pid: %d",array_num(procs_list),get_index_proc(proc->p_pid),proc->p_pid);
+	struct proc * pp = array_get(procs_list,get_index_proc(proc->p_pid));
+	if(pp->p_pid!=PID_MAX){
+		array_remove(procs_list, get_index_proc(proc->p_pid));
+	}else{
+		DEBUG(DB_SYSCALL,"no such proc\n");
+	}
+	if(array_num(procs_list)==0){
+		DEBUG(DB_SYSCALL,"array cleanup\n");
+		array_cleanup(procs_list);
+		array_destroy(procs_list);
+		procs_list = NULL;
+	}
+	DEBUG(DB_SYSCALL,"children leave2:%d\n",array_num(&proc->p_children));
+	array_cleanup(&proc->p_children);
+	DEBUG(DB_SYSCALL,"children cleanup finish\n");
+	lock_destroy(proc->p_exit_lock);
+	lock_destroy(proc->p_wait_lock);
+	cv_destroy(proc->p_cv);
+#endif
 	kfree(proc->p_name);
 	kfree(proc);
 
@@ -208,6 +319,20 @@ proc_bootstrap(void)
     panic("could not create no_proc_sem semaphore\n");
   }
 #endif // UW 
+#if OPT_A2
+  //procs_list = array_create();
+  //array_init(procs_list);
+  /*array_setsize(procs_list, PID_MAX - PID_MIN+1);
+  for(unsigned int i=0;i<PID_MAX - PID_MIN+1;i++){
+			array_set(procs_list,i,NULL);
+		}*/
+  /* initial the new element pid_list its lock
+  procs_list = array_create();
+  procs_lock = lock_create("pid_list_lock");
+  array_setsize(pid_list,PID_MAX);
+  array_init(procs_list);*/
+#else
+#endif
 }
 
 /*
@@ -216,6 +341,8 @@ proc_bootstrap(void)
  * It will have no address space and will inherit the current
  * process's (that is, the kernel menu's) current directory.
  */
+
+
 struct proc *
 proc_create_runprogram(const char *name)
 {
@@ -271,6 +398,21 @@ proc_create_runprogram(const char *name)
 	V(proc_count_mutex);
 #endif // UW
 
+#if OPT_A2
+	//inital locks
+	
+	// initialize children proc array
+	/*if(procs_list == NULL){
+		procs_list = array_create();
+		//array_setsize(PID_MAX);
+		array_init(procs_list);
+	}
+	proc->p_pid = find_pid();
+	array_add(procs_list,proc,NULL);
+	proc->p_children = *array_create();
+	array_init(&proc->p_children); */
+#else
+#endif
 	return proc;
 }
 
@@ -313,6 +455,7 @@ proc_remthread(struct thread *t)
 	num = threadarray_num(&proc->p_threads);
 	for (i=0; i<num; i++) {
 		if (threadarray_get(&proc->p_threads, i) == t) {
+			//DEBUG(DB_SYSCALL,"remove thread array_num: %d",array_num(&proc->p_threads));
 			threadarray_remove(&proc->p_threads, i);
 			spinlock_release(&proc->p_lock);
 			t->t_proc = NULL;
@@ -341,7 +484,6 @@ curproc_getas(void)
 		return NULL;
 	}
 #endif
-
 	spinlock_acquire(&curproc->p_lock);
 	as = curproc->p_addrspace;
 	spinlock_release(&curproc->p_lock);

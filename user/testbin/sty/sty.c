@@ -84,6 +84,7 @@ waitall(void)
 int
 main()
 {
+	//warn("waitpid for fk");
 	hog();
 	hog();
 	hog();

@@ -44,6 +44,9 @@
 #include <vfs.h>
 #include <syscall.h>
 #include <test.h>
+#include <limits.h>
+#include <copyinout.h>
+#include "opt-A2.h"
 
 /*
  * Load program "progname" and start running it in usermode.
@@ -51,9 +54,11 @@
  *
  * Calls vfs_open on progname and thus may destroy it.
  */
+
 int
-runprogram(char *progname)
+runprogram(char *progname,char **args,unsigned long no_arg)
 {
+	DEBUG(DB_SYSCALL,"runprogram no_arg %lu \n",no_arg);
 	struct addrspace *as;
 	struct vnode *v;
 	vaddr_t entrypoint, stackptr;
@@ -65,8 +70,13 @@ runprogram(char *progname)
 		return result;
 	}
 
+
+
 	/* We should be a new process. */
-	KASSERT(curproc_getas() == NULL);
+	if(curproc_getas()){
+		as_deactivate();
+	}
+	//KASSERT(curproc_getas() == NULL);
 
 	/* Create a new address space. */
 	as = as_create();
@@ -74,9 +84,11 @@ runprogram(char *progname)
 		vfs_close(v);
 		return ENOMEM;
 	}
-
 	/* Switch to it and activate it. */
-	curproc_setas(as);
+	struct addrspace * pre_as = curproc_setas(as);
+	if (pre_as != NULL) {
+		as_destroy(pre_as);
+	}
 	as_activate();
 
 	/* Load the executable. */
@@ -97,10 +109,72 @@ runprogram(char *progname)
 		return result;
 	}
 
-	/* Warp to user mode. */
-	enter_new_process(0 /*argc*/, NULL /*userspace addr of argv*/,
-			  stackptr, entrypoint);
-	
+#if OPT_A2
+	DEBUG(DB_SYSCALL,"runprogram point 1 \n");
+	if(no_arg == 0){
+		enter_new_process(0, NULL,stackptr, entrypoint);
+	}else{
+		if(!args){ // only if args is not define
+			char *tem[1] = {NULL};
+			args = tem;
+		}
+		//check length available
+		int args_len = 0;
+		DEBUG(DB_SYSCALL,"runprogram point 5 \n");
+		for (unsigned long i = 0; i < no_arg; i++) {
+			args_len += strlen(args[i]) + 1; // +1 for \0
+			DEBUG(DB_SYSCALL,"check length i: %lu \n",i);
+		}
+		DEBUG(DB_SYSCALL,"runprogram point 6 \n");
+		//get memery space for args
+		size_t ptr_size = sizeof(userptr_t);
+		int arg_mem = (sizeof(char**) * (no_arg+1));
+		if(arg_mem % ptr_size != 0){
+			arg_mem += ptr_size - (arg_mem % ptr_size);
+		}	
+		int args_mem = (sizeof(char) * args_len);
+		if(args_mem % ptr_size != 0){
+			args_mem += ptr_size - (args_mem % ptr_size);
+		}	
+		args_mem += arg_mem;
+
+		 //move the stack pointer back
+		 stackptr -= args_mem;
+
+		 // copy argument values back on the user stack
+		char *argv[no_arg + 1]; 
+		userptr_t c_argv = (userptr_t)stackptr;
+		userptr_t c_val = (userptr_t)(stackptr + arg_mem);
+
+		size_t got;
+		int offset = 0;
+
+		DEBUG(DB_SYSCALL,"runprogram point 3 \n");
+		for (unsigned long i = 0; i < no_arg; i++) {
+			char * arg = args[i];
+			userptr_t dest = (userptr_t)((char *)c_val + offset);
+			result = copyoutstr(arg, dest, strlen(arg) + 1, &got);
+			if (result) {
+				return result;
+			}
+			argv[i] = (char *)dest;
+			offset += got;
+		}
+
+		argv[no_arg] = NULL;
+		DEBUG(DB_SYSCALL,"runprogram point 4 \n");
+		result = copyout(argv, c_argv, (no_arg + 1) * sizeof(char *));
+		if (result) {
+			// Address space copy error
+			return result;
+		}
+		DEBUG(DB_SYSCALL,"runprogram point 2 \n");
+		enter_new_process(no_arg, c_argv,stackptr, entrypoint);
+	}
+#else
+	enter_new_process(0, NULL ,stackptr, entrypoint);
+#endif
+
 	/* enter_new_process does not return. */
 	panic("enter_new_process returned\n");
 	return EINVAL;

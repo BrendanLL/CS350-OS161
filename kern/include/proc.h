@@ -36,6 +36,10 @@
  * Note: curproc is defined by <current.h>.
  */
 
+
+#include <types.h>
+#include <array.h>
+#include "opt-A2.h"
 #include <spinlock.h>
 #include <thread.h> /* required for struct threadarray */
 
@@ -52,7 +56,6 @@ struct proc {
 	char *p_name;			/* Name of this process */
 	struct spinlock p_lock;		/* Lock for this structure */
 	struct threadarray p_threads;	/* Threads in this process */
-
 	/* VM */
 	struct addrspace *p_addrspace;	/* virtual address space */
 
@@ -66,11 +69,25 @@ struct proc {
      system calls, since each process will need to keep track of all files
      it has opened, not just the console. */
   struct vnode *console;                /* a vnode for the console device */
-#endif
-
+#endif//UW
 	/* add more material here as needed */
+	#if OPT_A2
+	pid_t p_pid;               //pid
+	struct lock *p_exit_lock;
+	struct lock *p_wait_lock;         
+	struct cv *p_cv;
+	struct array p_children; //all child process
+	bool canexit;            //do it exit
+	int exitcode;            //exit code
+	#else
+	#endif//OPT_A2
 };
-
+#if OPT_A2
+// Processes are active if they have not exited or if their parent has not existed
+//and a lock to protect it
+struct array *procs_list;
+struct lock *procs_lock;
+#endif
 /* This is the process structure for the kernel and for kernel-only threads. */
 extern struct proc *kproc;
 
@@ -99,6 +116,10 @@ struct addrspace *curproc_getas(void);
 
 /* Change the address space of the current process, and return the old one. */
 struct addrspace *curproc_setas(struct addrspace *);
-
+#if OPT_A2
+/*return a valid pid or -1 if no valid pid*/
+pid_t find_pid(void);
+unsigned get_index_proc(pid_t pid);
+#endif //OPT_A2
 
 #endif /* _PROC_H_ */

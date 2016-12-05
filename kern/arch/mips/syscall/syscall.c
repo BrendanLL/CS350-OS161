@@ -34,6 +34,7 @@
 #include <mips/trapframe.h>
 #include <thread.h>
 #include <current.h>
+#include "opt-A2.h"
 #include <syscall.h>
 
 
@@ -129,6 +130,14 @@ syscall(struct trapframe *tf)
 			    (int)tf->tf_a2,
 			    (pid_t *)&retval);
 	  break;
+	#if OPT_A2
+	case SYS_fork:
+	  err = sys_fork((pid_t *) &retval, tf);
+	  break;
+	case SYS_execv:
+	  err = sys_execv((char*)tf->tf_a0, (char **)tf->tf_a1, &retval);
+	  break;
+	#endif
 #endif // UW
 
 	    /* Add stuff here */
@@ -177,7 +186,23 @@ syscall(struct trapframe *tf)
  * Thus, you can trash it and do things another way if you prefer.
  */
 void
+#if OPT_A2
+enter_forked_process(void *tf, unsigned long data)
+#else
 enter_forked_process(struct trapframe *tf)
+#endif
 {
+#if OPT_A2
+	(void) data;
+	struct trapframe *ori_tf = tf;
+	struct trapframe kerntf = *ori_tf;
+
+	kerntf.tf_v0 = 0;
+	kerntf.tf_a3 = 0;
+	kerntf.tf_epc = kerntf.tf_epc + 4;
+	kfree(ori_tf);
+	mips_usermode(&kerntf);
+#else
 	(void)tf;
+#endif
 }

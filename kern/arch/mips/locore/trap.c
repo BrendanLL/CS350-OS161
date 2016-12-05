@@ -39,7 +39,8 @@
 #include <vm.h>
 #include <mainbus.h>
 #include <syscall.h>
-
+#include <kern/wait.h>
+#include "opt-A3.h"
 
 /* in exception.S */
 extern void asm_usermode(struct trapframe *tf);
@@ -65,6 +66,44 @@ static const char *const trapcodenames[NTRAPCODES] = {
 	"Coprocessor unusable",
 	"Arithmetic overflow",
 };
+
+#if OPT_A3
+static const char *const signalnames[_NSIG] = {
+	"Hangup",
+	"Interrupt (^C)",
+	"Quit (typically ^\\)",
+	"Illegal instruction",
+	"Breakpoint trap",
+	"abort() call",
+	"Emulator trap",
+	"Floating point exception",
+	"Hard kill (unblockable)",
+	"Bus error, typically bad pointer alignmen",
+	"Segmentation fault",
+	"Bad system call",
+	"Broken pipe",
+	"alarm() expired",
+	"Termination requested (default kill)",
+	"Urgent data on socket",
+	"Hard process stop (unblockable)",
+	"Terminal stop (^Z)",
+	"Time to continue after stop",
+	"Child process exited",
+	"Stop on tty read while in background",
+	"Stop on tty write while in background",
+	"Nonblocking or async I/O is now ready",
+	"CPU time resource limit exceeded",
+	"File size resource limit exceeded",
+	"Like SIGALRM but in virtual time",
+	"Profiling timer",
+	"Window size change on tty",
+	"Information request (typically ^T)",
+	"Application-defined",
+	"Application-defined",
+	"Power failure",
+};
+#endif // OPT_A3
+
 
 /*
  * Function called when user-level code hits a fatal fault.
@@ -111,10 +150,14 @@ kill_curthread(vaddr_t epc, unsigned code, vaddr_t vaddr)
 	/*
 	 * You will probably want to change this.
 	 */
-
-	kprintf("Fatal user mode trap %u sig %d (%s, epc 0x%x, vaddr 0x%x)\n",
-		code, sig, trapcodenames[code], epc, vaddr);
-	panic("I don't know how to handle this\n");
+	#if OPT_A3
+		kprintf("Fatal user mode operation. %u sig %d %s (epc 0x%x, vaddr 0x%x)\n",code,sig,signalnames[sig-1], epc, vaddr);
+		sys__exit(_MKWAIT_SIG(sig));
+	#else
+		kprintf("Fatal user mode trap %u sig %d (%s, epc 0x%x, vaddr 0x%x)\n",
+			code, sig, trapcodenames[code], epc, vaddr);
+		panic("I don't know how to handle this\n");
+	#endif
 }
 
 /*

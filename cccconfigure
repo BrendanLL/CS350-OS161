@@ -1,7 +1,7 @@
 ./configure --ostree=$HOME/cs350-os161/root --toolprefix=cs350-
 cd kern/conf
-./config ASST0
-cd ../compile/ASST1
+./config ASST3
+cd ../compile/ASST3
 bmake depend
 bmake
 bmake install
